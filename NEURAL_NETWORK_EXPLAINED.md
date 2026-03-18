@@ -154,7 +154,12 @@ ReLU(z) = max(0, z)
 ```
 
 ### Why it's necessary
-Without activations, stacking layers is mathematically useless. Two linear layers collapse into one:
+
+The **one and only job** of an activation function is to introduce **non-linearity**. "Capturing patterns from data" is a consequence of that — not the direct cause.
+
+**Why non-linearity matters:** Real-world data is almost never linearly separable. In MNIST for example, the digit `0` and digit `1` cannot be separated by a straight line in pixel space — thousands of overlapping pixel configurations exist for both classes. You need a decision boundary that bends and folds through 784 dimensions. That folding is only possible because of non-linearity.
+
+Without activations, stacking layers is mathematically useless. Two linear layers always collapse into one:
 
 ```
   Z² = W² · (W¹ · X + b¹) + b²
@@ -164,7 +169,20 @@ Without activations, stacking layers is mathematically useless. Two linear layer
 
 No matter how many layers: `depth without activation = one straight line`.
 
-ReLU breaks this by treating positive and negative regions differently. Each neuron becomes a **switch**:
+```
+  Without activation          With ReLU activation
+  (linear only)               (non-linear)
+
+      ●  ○  ●                     ●  ○  ●
+    ○  ●  ○                     ○  ●  ○
+      ●  ○  ●                     ●  ○  ●
+
+    Can't separate this.        Can separate this.
+    Best it can do is           Boundary can bend,
+    one straight line.          curve, and fold.
+```
+
+ReLU breaks linearity by treating positive and negative regions differently. Each neuron becomes a **switch**:
 
 ```
   Neuron A  (w=2, b=-1)      Neuron B  (w=-2, b=1)      Combined
@@ -176,6 +194,16 @@ ReLU breaks this by treating positive and negative regions differently. Each neu
 ```
 
 Their **weighted sum** can approximate any curve — this is why more neurons = more expressive network.
+
+**The precise way to think about it:**
+
+| Common phrasing | More precise |
+|---|---|
+| "Captures patterns from data" | "Learns non-linear decision boundaries" |
+| "Understands the data better" | "Maps inputs to outputs not achievable with a straight line" |
+| "Provides good predictions" | "Correctly classifies inputs that aren't linearly separable" |
+
+The activation function doesn't add understanding — it adds **flexibility** to the function the network can represent.
 
 ### Why ReLU specifically
 - `max(0, z)` is one operation — fast
@@ -357,8 +385,48 @@ No way to assign blame to individual weights. The network cannot improve.
 
 ## Component 7 — Gradient Descent
 
+### The Problem It Solves
+
+After the forward pass, we have a loss — a single number saying "the network is this wrong."
+After backprop, we have gradients — a number for every weight saying "if this weight increases slightly, the loss changes by this much."
+
+But knowing the loss is wrong and knowing the gradient **does not automatically fix the network**. Something has to actually change the weights. That is the sole job of Gradient Descent.
+
+> **Gradient Descent is the mechanism that translates the mathematical signal from backprop into actual weight updates. Without it, the network computes how to improve but never does.**
+
+---
+
+### Intuition — The Hill Analogy
+
+Imagine you are blindfolded on a hilly landscape and your goal is to reach the lowest valley (minimum loss). You can't see the full landscape. The only thing you can feel is the **slope under your feet right now** — that's the gradient.
+
+```
+  Loss (height)
+   │
+   │       ●  ← you are here (current weights, high loss)
+   │      /│\
+   │     / │ \
+   │    /  ↓  \       gradient tells you the slope
+   │   /   ↓   \      you step downhill (opposite to gradient)
+   │  /    ↓    \
+   │ /     ●     \    ← lower loss after one step
+   │/             \
+   │               ●  ← minimum (lowest loss)
+   └──────────────────── weight value
+```
+
+The gradient tells you which direction is uphill. You go **opposite** to it — downhill — by a controlled step size `α`. This is why the update rule has a **minus sign**:
+
+```
+W := W - α · dW
+       ↑
+    minus = move opposite to gradient = move downhill
+```
+
+---
+
 ### What it does
-Applies the gradients computed by backprop to update every weight — moving them in the direction that reduces loss:
+Applies the gradient to every weight after each backward pass:
 
 ```
 W := W - α · dW
@@ -379,27 +447,47 @@ b := b - α · db
                                (α=0.1 keeps it small)
 ```
 
-The same happens for all four parameter matrices: `W¹, b¹, W², b²`.
+The same happens simultaneously for all four parameter matrices: `W¹, b¹, W², b²`.
+In our network that's **101,770 individual weight updates** — every single iteration.
 
-### The learning rate α
+---
+
+### Why the Minus Sign Is Everything
+
+The gradient `dW` points in the direction of **steepest increase** in loss.
+We want to **decrease** loss, so we move in the exact opposite direction.
+
+```
+  dW > 0  →  increasing W increases loss  →  W := W - α·dW  (decreases W)
+  dW < 0  →  decreasing W increases loss  →  W := W - α·dW  (increases W)
+  dW = 0  →  W is at a local minimum      →  no change needed
+```
+
+This is why Gradient Descent always makes progress — it is mathematically guaranteed to reduce loss at each step, as long as the learning rate is sensible.
+
+---
+
+### The Role of the Learning Rate α
+
+The gradient tells you **direction**. The learning rate `α` controls **how far** you step in that direction. This is critical:
 
 ```
   Loss
    │
    │  ●  ← start (high loss)
    │   \
-   │    ●  α too large: step overshoots, bounces around
+   │    ●  α too large: step overshoots the minimum, bounces around
    │   / \
-   │  ●   ●
+   │  ●   ●   (loss may even increase)
    │
    │  ●  ← start
    │   ↘
-   │    ↘  α just right: steady descent
+   │    ↘  α just right: steady, controlled descent
    │     ↘
    │      ●  ← converged (low loss)
    │
    │  ● ← start
-   │  ↓  α too small: barely moves, takes forever
+   │  ↓  α too small: steps are tiny, takes thousands of iterations
    │  ●
    └──────────────────────────── iterations
 ```
@@ -410,8 +498,25 @@ The same happens for all four parameter matrices: `W¹, b¹, W², b²`.
 | Too small (e.g. 0.0001) | Crawls to minimum, takes too long |
 | Just right (e.g. 0.1) | Steadily descends to a good minimum |
 
+There is no formula for the perfect `α` — it is found by experimentation. This is one of the most important hyperparameters you tune when training a network.
+
+---
+
+### The Full Picture — Where Gradient Descent Sits
+
+```
+  Forward Pass  →  Loss  →  Backprop  →  Gradient Descent
+                    │              │              │
+               "how wrong     "who is        "fix them"
+                are we?"      responsible?"
+```
+
+Every other component feeds into Gradient Descent. The loss gives it a signal to minimise. Backprop gives it the precise gradients to act on. Gradient Descent is the **executor** — the step that actually changes the network.
+
+Without it, the network is a read-only system. It can measure how wrong it is, compute exactly what needs to change, and then do absolutely nothing.
+
 ### What would break without it
-Gradients tell you direction but not the magnitude of change. Without a controlled update step, you'd overshoot or never converge.
+Gradients computed but never applied — the network stays at random initialisation forever, loss never decreases, accuracy stays at ~10%.
 
 ---
 
