@@ -44,206 +44,387 @@ repeat 500× → network improves from 10% → 85%+ accuracy
 ## Component 1 — The Neuron
 
 ### What it does
-Computes a weighted sum of its inputs plus a bias:
+A single neuron takes `n` inputs, multiplies each by a weight, sums them up, and adds a bias:
 
 ```
-z = w₁x₁ + w₂x₂ + ... + wₙxₙ + b
+z = w₁x₁ + w₂x₂ + w₃x₃ + b
+```
+
+In vector form — the weights `W` and input `X` are 1D vectors, `b` is a scalar:
+
+```
+       W (1 × n_inputs)            X (n_inputs × 1)
+  ┌─────────────────────────┐    ┌──────┐
+  │  w₁   w₂   w₃  ...  wₙ │  · │  x₁  │  +  b  =  z  (scalar)
+  └─────────────────────────┘    │  x₂  │
+                                 │  x₃  │
+                                 │  ... │
+                                 │  xₙ  │
+                                 └──────┘
+```
+
+**Example** with 3 inputs:
+```
+W = [ 0.3   -0.5   0.8 ]       X = [ 0.5 ]       b = 0.1
+                                    [ 0.2 ]
+                                    [ 0.8 ]
+
+z = (0.3×0.5) + (-0.5×0.2) + (0.8×0.8) + 0.1
+  =  0.15    +  -0.10      +  0.64     + 0.1
+  =  0.79
 ```
 
 ### Why it's necessary
-A neuron is the unit of **parameterized computation**. The weights `w` and bias `b` are the things the network *learns*. Without neurons — without weights — there is nothing to adjust, nothing to train, nothing to learn.
+The weights `w` and bias `b` are the things the network *learns*. Without them there is nothing to adjust, nothing to train, nothing to learn.
 
-The bias `b` is critical: it lets a neuron activate even when all inputs are zero, giving the neuron its own "default opinion" independent of the data.
+The bias `b` lets a neuron activate even when all inputs are zero — it gives the neuron its own "default opinion" independent of the data.
 
 ### What would break without it
-Without weights, the network would be a fixed transformation — the same for every problem, with no ability to adapt.
+Without weights, the network is a fixed transformation — the same for every problem, with no ability to adapt.
 
 ---
 
 ## Component 2 — The Layer (Matrix Math)
 
 ### What it does
-A layer is N neurons operating in parallel on the same input, expressed as a matrix multiplication:
+A layer is `n_neurons` neurons all reading the same input simultaneously.
+Instead of computing each neuron one by one, we pack all their weights into a matrix and do one multiply:
 
 ```
 Z = W · X + b
 ```
-- `W` shape: `(n_neurons, n_inputs)` — one row of weights per neuron
-- `X` shape: `(n_inputs, m)` — m samples processed simultaneously
-- `Z` shape: `(n_neurons, m)` — every neuron's output for every sample
+
+For a hidden layer with **128 neurons**, **784 inputs**, **m samples**:
+
+```
+  W  (128 × 784)          X  (784 × m)             b (128 × 1)     Z (128 × m)
+  [actual shape shown]    [actual shape shown]
+  ┌──────────────────┐    ┌──────────────┐          ┌────┐          ┌──────────┐
+  │ w₁₁  w₁₂  ...    │    │ x₁₁  x₁₂ …   │          │ b₁ │          │ z₁₁  z₁₂ │
+  │ w₂₁  w₂₂  ...    │  · │ x₂₁  x₂₂ …   │    +     │ b₂ │    =     │ z₂₁  z₂₂ │
+  │ ...  ...   ...   │    │ ...  ...  …  │          │ .. │          │ ...  ... |
+  │w₁₂₈₁ ...  ...    │    │ x₇₈₄₁ ...…   │          │b₁₂₈│          │z₁₂₈₁ ... │
+  └──────────────────┘    └──────────────┘          └────┘          └──────────┘
+  ↑ row i = weights          ↑ col j = one               ↑ broadcast  ↑ cell (i,j) =
+    of neuron i                sample's pixels              to all m     neuron i's output
+                                                            samples      for sample j
+```
+
+**Small concrete example** — 3 neurons, 4 inputs, 2 samples:
+
+```
+  W (3 × 4)                X (4 × 2)          b (3 × 1)     Z (3 × 2)
+  ┌                     ┐   ┌         ┐         ┌     ┐       ┌         ┐
+  │  0.3  -0.5  0.8  0.1│   │ 0.5  0.9│         │ 0.1 │       │ z₁₁  z₁₂│
+  │ -0.2   0.4  0.6 -0.3│ · │ 0.2  0.1│    +    │-0.2 │   =   │ z₂₁  z₂₂│
+  │  0.7  -0.1  0.2  0.5│   │ 0.8  0.3│         │ 0.3 │       │ z₃₁  z₃₂│
+  └                     ┘   │ 0.4  0.7│         └     ┘       └         ┘
+                            └         ┘
+  ↑ 3 rows = 3 neurons      ↑ 2 cols = 2 samples             ↑ 3 neurons × 2 samples
+```
+
+Row `i` of W dotted with column `j` of X gives `Z[i,j]` — neuron `i`'s output for sample `j`.
 
 ### Why it's necessary
-Two reasons:
-
-1. **Efficiency**: A single matrix multiply computes all N neurons for all M samples in one operation. This is why neural networks run fast on GPUs — they are massively parallel matrix machines.
-
-2. **Feature hierarchy**: Each layer learns a different level of abstraction. Layer 1 might detect edges in an image. Layer 2 combines edges into shapes. Layer 3 combines shapes into objects. You cannot build this hierarchy with a single neuron.
+1. **Efficiency** — One matrix multiply computes all neurons for all samples at once. This is why neural networks run fast on GPUs — they are massively parallel matrix machines.
+2. **Compositional abstraction** — Each layer computes a new representation built on top of the previous layer's outputs. In theory, deeper layers can capture more complex patterns. However, *what* each neuron actually specialises in is **not guaranteed or defined** — it depends entirely on the data, the task, and random initialisation. The common description of "Layer 1 detects edges, Layer 2 detects shapes" is an intuition observed empirically in CNNs (Convolutional Neural Networks) trained on images — it does **not** apply to plain fully-connected networks like ours, where neurons have no spatial awareness and their learned features are largely uninterpretable without explicit analysis.
 
 ### What would break without it
-Without layers, you'd need to manually loop over every neuron for every sample — unusably slow, and no hierarchy of features.
+You'd loop over every neuron for every sample — unusably slow, and no hierarchy of features.
 
 ---
 
 ## Component 3 — ReLU Activation Function
 
 ### What it does
-Applied element-wise after every hidden layer:
+Applied **element-wise** to every value in Z after a hidden layer:
 
 ```
 ReLU(z) = max(0, z)
 ```
 
-Negative values → 0. Positive values → unchanged.
+```
+  Z (3 × 2)  — before ReLU         A (3 × 2)  — after ReLU
+  ┌              ┐                  ┌              ┐
+  │  0.79  -0.31 │    →  ReLU  →    │  0.79   0.00 │   ← negative killed
+  │ -0.44   0.55 │                  │  0.00   0.55 │   ← negative killed
+  │  0.12   0.38 │                  │  0.12   0.38 │
+  └              ┘                  └              ┘
+  same shape, same size — only sign changes
+```
 
 ### Why it's necessary
-This is the most misunderstood component. The zero-ing of negatives **is not** the point. The point is **non-linearity**.
-
-Without activation functions, no matter how many layers you stack, the entire network collapses mathematically into a single linear equation:
+Without activations, stacking layers is mathematically useless. Two linear layers collapse into one:
 
 ```
-Layer 2(Layer 1(X)) = (W₂W₁)X + (W₂b₁ + b₂) = W'X + b'
+  Z² = W² · (W¹ · X + b¹) + b²
+     = (W²W¹) · X  +  (W²b¹ + b²)
+     =    W'  · X  +       b'           ← still just one linear layer
 ```
 
-That's just one straight line. A straight line can never learn:
-- A curve
-- A boundary that isn't flat
-- Any real-world pattern of meaningful complexity
+No matter how many layers: `depth without activation = one straight line`.
 
-ReLU breaks this by treating the positive and negative regions differently. Each neuron effectively becomes a **switch** — off for its dead zone, linear for its active zone. A layer of neurons with different weights and biases places these switches at different points, and their weighted sum approximates any curve.
+ReLU breaks this by treating positive and negative regions differently. Each neuron becomes a **switch**:
 
-### Why ReLU specifically (vs other activations)
-- Simple to compute: `max(0, z)` is one operation
-- Simple derivative: 1 where active, 0 where dead — clean gradient flow
-- No vanishing gradient for positive inputs (unlike Sigmoid/Tanh which saturate)
+```
+  Neuron A  (w=2, b=-1)      Neuron B  (w=-2, b=1)      Combined
+  fires when x > 0.5         fires when x < 0.5         covers the full range
+
+       ↗ active                  active ↘
+  ────/──────────             ──────────\────
+     /  dead zone              dead zone \
+```
+
+Their **weighted sum** can approximate any curve — this is why more neurons = more expressive network.
+
+### Why ReLU specifically
+- `max(0, z)` is one operation — fast
+- Derivative is 1 (active) or 0 (dead) — clean gradient, no vanishing
+- Unlike Sigmoid/Tanh, it doesn't saturate — large inputs still get gradient
 
 ### What would break without it
-Without activation functions: no matter how deep the network, it can only fit straight lines. It would never reach 85% accuracy on MNIST — it would plateau around 30-40%.
+Network collapses to linear — can only fit straight lines. MNIST accuracy would plateau ~30-40%.
 
 ---
 
 ## Component 4 — Softmax (Output Activation)
 
 ### What it does
-Converts raw output scores (logits) into a valid probability distribution:
+The output layer produces raw scores called **logits** — any real number. Softmax converts them to probabilities:
 
 ```
 Softmax(zᵢ) = e^zᵢ / Σⱼ e^zⱼ
 ```
 
-All outputs sum to exactly 1. The largest logit gets the highest probability.
+```
+  Z² (logits, 10 × 1)       A² (probabilities, 10 × 1)
+  ┌       ┐                 ┌        ┐
+  │  2.0  │  class 0        │  0.09  │  9%
+  │  1.0  │  class 1        │  0.03  │  3%
+  │  0.5  │  class 2        │  0.02  │  2%
+  │ -1.0  │  class 3        │  0.00  │  0%
+  │  3.5  │  class 4  →     │  0.44  │  44%  ← predicted class (argmax)
+  │ -0.5  │  class 5        │  0.01  │  1%
+  │  0.2  │  class 6        │  0.02  │  2%
+  │  1.8  │  class 7        │  0.08  │  8%
+  │ -2.0  │  class 8        │  0.00  │  0%
+  │  0.9  │  class 9        │  0.03  │  3%
+  └       ┘                 └        ┘
+                            sum = 1.00  ✓
+```
+
+The largest logit (3.5 for class 4) wins, but all classes get *some* probability — the network expresses its full confidence distribution.
 
 ### Why it's necessary
-The output layer produces raw numbers — they could be 100, -50, 0.3. These are meaningless as probabilities.
-
-We need probabilities because:
-1. The prediction is `argmax(output)` — we need to compare across classes fairly
-2. The loss function (cross-entropy) requires probabilities — it takes `log(probability)` of the correct class
-3. Probabilities give us **confidence** — not just "class 3" but "87% sure it's class 3"
+Raw logits can't be used directly:
+- They don't sum to 1 → can't interpret as probability
+- They can be negative → `log(negative)` in loss function is undefined
 
 ### Why not ReLU on the output?
-ReLU outputs can be 0 — a class could have exactly 0 probability, which breaks `log(0)` in the loss. ReLU outputs also don't sum to 1, so you can't interpret them as probabilities.
+ReLU could zero out an entire class (set probability = 0), then `log(0) = -∞` blows up the loss.
 
 ### What would break without it
-Raw logits fed into cross-entropy would produce meaningless loss values. Training would be numerically unstable or produce nonsensical gradients.
+Loss computation becomes numerically undefined. Training crashes.
 
 ---
 
 ## Component 5 — Loss Function (Cross-Entropy)
 
 ### What it does
-Measures how wrong the network's prediction is with a single number:
+Takes the probability vector `A²` and the true label `y`, and produces a single number measuring how wrong we are:
 
 ```
-L = -log(probability assigned to the correct class)
+L = -log( A²[y] )     ← just the probability assigned to the correct class
 ```
 
-- Predicted `p=0.99` for correct class → loss = `0.01` (nearly perfect)
-- Predicted `p=0.10` for correct class → loss = `2.30` (random guessing)
-- Predicted `p=0.01` for correct class → loss = `4.60` (confidently wrong)
+```
+  A² (10 × 1)                         True label: y = 4
+  ┌        ┐
+  │  0.09  │  class 0
+  │  0.03  │  class 1
+  │  0.02  │  class 2
+  │  0.00  │  class 3
+  │  0.44  │  class 4  ← correct class → L = -log(0.44) = 0.82
+  │  0.01  │  class 5
+  │  0.02  │  class 6
+  │  0.08  │  class 7
+  │  0.00  │  class 8
+  │  0.03  │  class 9
+  └        ┘
+```
+
+Over `m` samples — one correct-class probability per sample, averaged:
+
+```
+  correct_probs  (1 × m)  — one entry per sample
+  ┌──────────────────────────────────────────┐
+  │  p_s1   p_s2   p_s3   p_s4  ...  p_sm   │
+  └──────────────────────────────────────────┘
+         ↓  apply -log to each  ↓
+  ┌──────────────────────────────────────────┐
+  │  L_s1   L_s2   L_s3   L_s4  ...  L_sm   │
+  └──────────────────────────────────────────┘
+                    ↓  average  ↓
+                    L  (scalar)
+```
+
+| Predicted probability | Loss = -log(p) |
+|---|---|
+| `p = 0.99` (confident, correct) | `0.01` — nearly zero |
+| `p = 0.50` (uncertain) | `0.69` — moderate |
+| `p = 0.10` (random guess) | `2.30` — baseline |
+| `p = 0.01` (confident, wrong) | `4.60` — severe penalty |
 
 ### Why it's necessary
-Training requires a **differentiable** measure of error. Accuracy (0 or 1 per sample) is not differentiable — you can't compute "which direction should I move the weights to increase accuracy by a tiny amount?".
+Accuracy (0 or 1) is not differentiable — you can't compute a gradient from it. Cross-entropy is smooth everywhere, so backprop can compute precise gradients.
 
-Cross-entropy is smooth and differentiable everywhere. Its gradient tells the network precisely how to adjust to improve.
-
-The `-log` shape is intentional: it punishes overconfident wrong predictions **disproportionately hard**. A network that says "I'm 99% sure it's a 3" when it's actually a 7 gets a loss of 4.60. This forces the network to be calibrated — not just right, but appropriately confident.
+The `-log` curve punishes overconfident wrong answers disproportionately — forcing the network to be calibrated, not just sometimes right.
 
 ### What would break without it
-Without a differentiable loss, there is no gradient, and without a gradient, there is no backpropagation. The network cannot learn.
+No differentiable signal → no gradients → no backprop → no learning.
 
 ---
 
 ## Component 6 — Backpropagation
 
 ### What it does
-Computes the gradient of the loss with respect to **every single weight** in the network, using the Chain Rule:
+Uses the chain rule to compute the gradient of the loss with respect to **every weight** in the network, walking backwards layer by layer.
 
 ```
-∂L/∂W = ∂L/∂A · ∂A/∂Z · ∂Z/∂W
+∂L/∂W¹ = ∂L/∂Z² · ∂Z²/∂A¹ · ∂A¹/∂Z¹ · ∂Z¹/∂W¹
 ```
 
-Walking backwards through the network, each layer receives the error signal from the layer ahead of it and passes a transformed version back to the layer behind it.
+**Step-by-step for our network:**
 
-For our two-layer network:
+**Step 1 — Error at output layer** (Softmax + Cross-entropy combined):
 ```
-dZ2 = A2 - Y_onehot          ← error at output (how far off were the probabilities?)
-dW2 = (1/m) dZ2 · A1ᵀ        ← how much did W2 contribute to that error?
-dA1 = W2ᵀ · dZ2              ← push error back through to hidden layer
-dZ1 = dA1 ⊙ ReLU'(Z1)        ← ReLU gate: block gradient where neuron was dead
-dW1 = (1/m) dZ1 · Xᵀ         ← how much did W1 contribute?
+  dZ²  (10 × m)
+  ┌                        ┐
+  │ A²[0]-Y[0]  ...  ...   │
+  │ A²[1]-Y[1]  ...  ...   │    =  A²  -  Y_onehot
+  │    ...       ...  ...  │
+  │A²[9]-Y[9]   ...  ...   │
+  └                        ┘
+  Each cell = (predicted prob) - (true prob)
+  Correct class: was 0.44, should be 1.0  →  dZ² = -0.56  (big negative → push up)
+  Wrong  class:  was 0.09, should be 0.0  →  dZ² = +0.09  (small positive → push down)
+```
+
+**Step 2 — Gradients for W², b²:**
+```
+  dW²  (10 × 128)          =  (1/m) · dZ² (10×m)  ·  A¹ᵀ (m×128)
+
+  db²  (10 × 1)            =  (1/m) · sum(dZ², axis=1)
+```
+
+**Step 3 — Push error back to hidden layer:**
+```
+  dA¹  (128 × m)           =  W²ᵀ (128×10)  ·  dZ² (10×m)
+
+  dZ¹  (128 × m)           =  dA¹  ⊙  ReLU'(Z¹)
+                                        ↑
+                               element-wise multiply
+                               1 where Z¹>0 (gradient flows)
+                               0 where Z¹≤0 (gradient blocked)
+
+  ┌──────────────────┐     ┌──────────────────┐     ┌──────────────────┐
+  │  0.3  -0.1  0.5  │     │   1    0    1    │     │  0.3   0    0.5  │
+  │ -0.2   0.4 -0.3  │  ⊙  │   0    1    0    │  =  │  0     0.4   0   │
+  │  0.1   0.2  0.7  │     │   1    1    1    │     │  0.1   0.2  0.7  │
+  └──────────────────┘     └──────────────────┘     └──────────────────┘
+      dA¹ (gradient)           ReLU gate                 dZ¹ (blocked)
+                            (from forward pass)
+```
+
+**Step 4 — Gradients for W¹, b¹:**
+```
+  dW¹  (128 × 784)         =  (1/m) · dZ¹ (128×m)  ·  Xᵀ (m×784)
+  [shape: 128×784, same as W¹]
+
+  db¹  (128 × 1)           =  (1/m) · sum(dZ¹, axis=1)
 ```
 
 ### Why it's necessary
-A network has thousands of weights. We need to know the gradient for **each one** to know how to update it. You cannot compute this by hand or by trying random updates.
-
-Backprop is an efficient application of the chain rule that reuses intermediate computations, making gradient calculation tractable even for millions of parameters.
+A network with 128 hidden neurons on 784 inputs has `128×784 + 128 + 10×128 + 10 = 101,770` parameters. There is no other tractable way to compute the gradient for each one. Backprop reuses intermediate results (dZ², dA¹) so the cost is proportional to the number of parameters — not exponential.
 
 ### The ReLU gate in backprop
-Notice `dZ1 = dA1 ⊙ ReLU'(Z1)`. ReLU's derivative is 1 where active, 0 where dead.
-This means: neurons that were silent during the forward pass receive **zero gradient** during backprop. They don't update. This is the direct connection between forward and backward passes — the forward pass determines which neurons participate in learning.
+`dZ¹ = dA¹ ⊙ ReLU'(Z¹)` — neurons that were silent during the forward pass get **zero gradient**. They don't update this step. The forward pass directly controls which neurons learn.
 
 ### What would break without it
-Without backprop, we'd have no way to assign credit or blame to individual weights. The network could not improve.
+No way to assign blame to individual weights. The network cannot improve.
 
 ---
 
 ## Component 7 — Gradient Descent
 
 ### What it does
-Uses the gradients computed by backprop to update every weight:
+Applies the gradients computed by backprop to update every weight — moving them in the direction that reduces loss:
 
 ```
 W := W - α · dW
 b := b - α · db
 ```
 
-`α` (alpha) is the **learning rate** — it controls step size.
+**Concrete update for W²** `(10 × 128)`:
 
-### Why it's necessary
-Knowing the gradient tells you the direction of steepest ascent on the loss surface. Moving **opposite** to the gradient (hence the minus sign) moves you downhill — toward lower loss.
+```
+  W²  (10 × 128)              α · dW²  (10 × 128)          W²_new  (10 × 128)
+  [actual shape: 10×128]       [actual shape: 10×128]        [actual shape: 10×128]
+  ┌                 ┐          ┌                 ┐           ┌                 ┐
+  │ 0.31  -0.12 ... │          │ 0.02  -0.01 ... │           │ 0.29  -0.11 ... │
+  │-0.44   0.55 ... │    -     │-0.03   0.04 ... │     =     │-0.41   0.51 ... │
+  │  ...   ...  ... │          │  ...   ...  ... │           │  ...   ...  ... │
+  └                 ┘          └                 ┘           └                 ┘
+  current weights              small nudge                   updated weights
+                               (α=0.1 keeps it small)
+```
 
-### The learning rate trade-off
+The same happens for all four parameter matrices: `W¹, b¹, W², b²`.
+
+### The learning rate α
+
+```
+  Loss
+   │
+   │  ●  ← start (high loss)
+   │   \
+   │    ●  α too large: step overshoots, bounces around
+   │   / \
+   │  ●   ●
+   │
+   │  ●  ← start
+   │   ↘
+   │    ↘  α just right: steady descent
+   │     ↘
+   │      ●  ← converged (low loss)
+   │
+   │  ● ← start
+   │  ↓  α too small: barely moves, takes forever
+   │  ●
+   └──────────────────────────── iterations
+```
+
 | Learning rate | Effect |
 |---|---|
-| Too large (e.g. 1.0) | Overshoots the minimum, loss oscillates or diverges |
-| Too small (e.g. 0.0001) | Crawls toward minimum, takes forever to train |
-| Just right (e.g. 0.1) | Steadily descends, reaches a good minimum |
+| Too large (e.g. 1.0) | Overshoots minimum, loss oscillates or diverges |
+| Too small (e.g. 0.0001) | Crawls to minimum, takes too long |
+| Just right (e.g. 0.1) | Steadily descends to a good minimum |
 
 ### What would break without it
-Gradients alone tell you direction but not magnitude of the step. Without a controlled update rule, the network would wildly overshoot or never converge.
+Gradients tell you direction but not the magnitude of change. Without a controlled update step, you'd overshoot or never converge.
 
 ---
 
 ## Why the Order Matters
 
-Each component feeds into the next. Remove any one of them and the chain breaks:
+Each component feeds directly into the next. Remove any one and the chain breaks:
 
 | Remove this | What breaks |
 |---|---|
 | Weights (neurons) | Nothing to learn — network is fixed |
 | Layers | No feature hierarchy — can't solve complex problems |
-| ReLU | Network collapses to linear — can't fit curves |
-| Softmax | Output isn't a probability — loss is meaningless |
+| ReLU | Network collapses to linear — can only fit straight lines |
+| Softmax | Output isn't a probability — loss is numerically undefined |
 | Loss function | No differentiable signal — backprop has nothing to compute |
 | Backpropagation | Can't assign credit to individual weights — no learning |
 | Gradient descent | Gradients computed but never applied — no improvement |
@@ -255,6 +436,43 @@ Each component feeds into the next. Remove any one of them and the chain breaks:
 > For each iteration: make a prediction (forward), measure the error (loss), figure out who's responsible (backprop), and fix them (gradient descent) — then repeat until the network is good enough.
 
 That's all a neural network is.
+
+---
+
+## Full Matrix Flow — One Forward + Backward Pass
+
+```
+INPUT
+  X         (784 × m)   ← 784 pixel values per sample, m samples
+
+HIDDEN LAYER — forward
+  Z¹ = W¹·X + b¹        W¹ (128×784),  b¹ (128×1)  →  Z¹ (128×m)
+  A¹ = ReLU(Z¹)         element-wise max(0,·)        →  A¹ (128×m)
+
+OUTPUT LAYER — forward
+  Z² = W²·A¹ + b²       W² (10×128),   b²  (10×1)  →  Z² (10×m)
+  A² = Softmax(Z²)      column-wise normalise         →  A² (10×m)
+
+LOSS
+  L  = -mean(log(A²[Y, :]))                          →  L  (scalar)
+
+OUTPUT LAYER — backward
+  dZ²= A² - Y_onehot                                 →  dZ² (10×m)
+  dW²= (1/m) dZ² · A¹ᵀ                              →  dW² (10×128)
+  db²= (1/m) sum(dZ², axis=1)                        →  db² (10×1)
+
+HIDDEN LAYER — backward
+  dA¹= W²ᵀ · dZ²                                    →  dA¹ (128×m)
+  dZ¹= dA¹ ⊙ ReLU'(Z¹)                              →  dZ¹ (128×m)
+  dW¹= (1/m) dZ¹ · Xᵀ                               →  dW¹ (128×784)
+  db¹= (1/m) sum(dZ¹, axis=1)                        →  db¹ (128×1)
+
+WEIGHT UPDATE
+  W² -= α · dW²         W¹ -= α · dW¹
+  b² -= α · db²         b¹ -= α · db¹
+```
+
+Every shape is intentional — the dimensions must align for each multiply to be valid, and they always produce a gradient with the **exact same shape** as the weight it will update.
 
 ---
 
@@ -270,4 +488,4 @@ That's all a neural network is.
 | `backward()` | `model.fit()` auto-differentiates |
 | `train()` loop | `model.fit(epochs=...)` |
 
-Keras wraps all of this with automatic differentiation (no need to derive gradients by hand) and hardware acceleration — but the math underneath is identical to what you built here.
+Keras wraps all of this with automatic differentiation (no need to derive gradients by hand) and hardware acceleration — but the math and matrix shapes underneath are **identical** to what you built here.
