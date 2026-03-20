@@ -143,6 +143,7 @@ Applied **element-wise** to every value in Z after a hidden layer:
 ReLU(z) = max(0, z)
 ```
 
+
 ```
   Z (3 × 2)  — before ReLU         A (3 × 2)  — after ReLU
   ┌              ┐                  ┌              ┐
